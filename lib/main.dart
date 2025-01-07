@@ -61,10 +61,13 @@ class Dock<T> extends StatefulWidget {
 
 /// State of the [Dock] used to manipulate the [_items].
 class _DockState<T> extends State<Dock<T>> {
-  /// [T] items being manipulated.
+  final GlobalKey _rowKey = GlobalKey();
+
   late final List<T> _items = widget.items.toList();
   List<int> _distanceIndexes = [];
-  T? hoveredItem;
+  bool _showAvaliableSpace = false;
+  T? _dragingItem;
+  int? _closestIndex;
 
   void _onExit() {
     setState(() => _distanceIndexes.clear());
@@ -83,28 +86,47 @@ class _DockState<T> extends State<Dock<T>> {
     });
   }
 
-  double _getScaleValue(int index) {
+  void _calculateClosestItem(PointerEvent event) {
+    final renderBox = _rowKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+
+    final rowWidth = renderBox.size.width;
+    final localPosition = renderBox.globalToLocal(event.position);
+    final sectionWidth = rowWidth / _items.length;
+
+    final closestIndex =
+        (localPosition.dx / sectionWidth).clamp(0, _items.length - 1).round();
+
+    if (_closestIndex != closestIndex && _dragingItem != null) {
+      setState(() {
+        _closestIndex = closestIndex;
+      });
+    }
+  }
+
+  // $1 - scale $2 - horizontal padding
+  (double, double) _getScaleAndPaddingValue(int index) {
     if (_distanceIndexes.isEmpty) {
-      return 1.0;
+      return (1.0, 0);
     }
 
     if (_distanceIndexes[index] == 0) {
-      return 1.4;
+      return (1.4, 8);
     }
 
     if (_distanceIndexes[index] == 1) {
-      return 1.3;
+      return (1.3, 5);
     }
 
     if (_distanceIndexes[index] == 2) {
-      return 1.2;
+      return (1.2, 3);
     }
 
     if (_distanceIndexes[index] == 3) {
-      return 1.1;
+      return (1.1, 1);
     }
 
-    return 1.0;
+    return (1.0, 0);
   }
 
   @override
@@ -115,37 +137,69 @@ class _DockState<T> extends State<Dock<T>> {
         color: Colors.black12,
       ),
       padding: const EdgeInsets.all(4),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: _items
-            .asMap()
-            .entries
-            .map(
-              (e) => Draggable(
-                feedback: widget.builder(e.value),
-                child: MouseRegion(
-                  onEnter: (event) => print('enter'),
-                  onExit: (event) => _onExit(),
-                  onHover: (event) => _onHover(e.value),
-                  child: TweenAnimationBuilder<double>(
-                    tween: Tween<double>(
-                      begin: 1.0,
-                      end: _getScaleValue(e.key),
+      child: Listener(
+        onPointerMove: (event) {
+          setState(() => _showAvaliableSpace = true);
+          _calculateClosestItem(event);
+        },
+        child: MouseRegion(
+          onExit: (event) => setState(() {
+            _showAvaliableSpace = false;
+            _distanceIndexes.clear();
+          }),
+          child: Row(
+            key: _rowKey,
+            mainAxisSize: MainAxisSize.min,
+            children: _items
+                .asMap()
+                .entries
+                .map(
+                  (e) => Draggable<int>(
+                    data: e.key,
+                    feedback: Transform.scale(
+                        scale: _getScaleAndPaddingValue(e.key).$1,
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(
+                              horizontal: _getScaleAndPaddingValue(e.key).$2),
+                          child: widget.builder(e.value),
+                        )),
+                    onDragStarted: () => _dragingItem = e.value,
+                    onDragEnd: (_) => _dragingItem = null,
+                    childWhenDragging: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: _showAvaliableSpace ? 64 : 0,
+                      height: 0,
                     ),
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeInOut,
-                    builder: (context, scale, child) {
-                      return Transform.scale(
-                        scale: scale,
-                        child: child,
-                      );
-                    },
-                    child: widget.builder(e.value),
+                    child: MouseRegion(
+                        onExit: (event) => _onExit(),
+                        onHover: (event) => _onHover(e.value),
+                        child: TweenAnimationBuilder<double>(
+                          tween: Tween<double>(
+                            begin: 1,
+                            end: _getScaleAndPaddingValue(e.key).$1,
+                          ),
+                          duration: const Duration(milliseconds: 200),
+                          curve: Curves.easeInOut,
+                          builder: (context, scale, child) {
+                            return Transform.scale(
+                              scale: scale,
+                              child: AnimatedContainer(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal:
+                                      _getScaleAndPaddingValue(e.key).$2,
+                                ),
+                                duration: const Duration(milliseconds: 200),
+                                curve: Curves.easeInOut,
+                                child: widget.builder(e.value),
+                              ),
+                            );
+                          },
+                        )),
                   ),
-                ),
-              ),
-            )
-            .toList(),
+                )
+                .toList(),
+          ),
+        ),
       ),
     );
   }
